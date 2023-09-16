@@ -6,7 +6,6 @@ import "./loadEnvironment.mjs";
 import "express-async-errors";
 import trips from "./routes/trips.mjs";
 
-
 const PORT = process.env.PORT || 5050;
 const app = express();
 
