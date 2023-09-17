@@ -10,18 +10,25 @@ const openai = new OpenAI({
 
 const router = express.Router();
 
-// TODO: include error handling
+// TODO: improve error handling
+// TODO: check how mongoose can help with schema's and DB management
+// TODO: convert to standard options from DB instead of creating on the fly
 
 // Get all trips
 router.get("/", async (req, res) => {
-  let collection = await db.collection("trips");
-  let results = await collection.find({})
-    .toArray();
+  try {
+    let collection = await db.collection("trips");
+    let results = await collection.find({})
+      .toArray();
 
-  res.send(results).status(200);
+    res.send(results).status(200);
+  } catch (error) {
+    console.log(error);
+    res.status(400).json({ message: error.message});
+  }
 });
 
-//Update by ID Method
+// Update by ID Method
 router.patch('/:id', async (req, res) => {
   const query = { _id: new ObjectId(req.params.id) };
 
@@ -35,6 +42,7 @@ router.patch('/:id', async (req, res) => {
   destinationsString = destinationsString.substring(0, destinationsString.length - 2)
 
   // TODO: Results are a bit unstable, check what we can do to fix it
+  // TODO: We might actually just want to cache a list of activities for each city, and let people play with it, instead of calling GPT for each update
   const gptPrompt = `[no prose] Create an itinerary of *activities* to do in: ${destinationsString}.
     Answer like this JSON example below, where each of the elements in the outer array is a day, and each of the elements in the inner array is one of the activities for each day: "
       [
@@ -45,6 +53,7 @@ router.patch('/:id', async (req, res) => {
       ]"`;
 
   try {
+    // Check what GPT thinks
     const chatCompletion = await openai.chat.completions.create({
       messages: [{
         role: "user",
@@ -54,7 +63,9 @@ router.patch('/:id', async (req, res) => {
       temperature: 0
     });
 
+    // console.log('RAW: ', chatCompletion.choices[0].message.content);
     const itineraryResponse = JSON.parse(chatCompletion.choices[0].message.content);
+    // console.log('RESP: ', itineraryResponse);
     const newItinerary = [ ...itineraryResponse ];
 
     // Build object to return to client
