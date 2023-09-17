@@ -33,50 +33,34 @@ router.patch('/:id', async (req, res) => {
 
   const { startDate, destinations, } = req.body;
 
-  let destinationsString = "";
-
-  for (let destination of destinations) {
-    destinationsString += `${destination.city} (${destination.numberOfDays} day(s)), `
-  }
-  destinationsString = destinationsString.substring(0, destinationsString.length - 2)
-
-  // TODO: Results are a bit unstable, check what we can do to fix it
-  // TODO: We might actually just want to cache a list of activities for each city, and let people play with it, instead of calling GPT for each update
-  const gptPrompt = `[no prose] Create an itinerary of *activities* to do in: ${destinationsString}.
-    Answer like this JSON example below, where each of the elements in the outer array is a day, and each of the elements in the inner array is one of the activities for each day: "
-      [
-        ["<activity 1 in day 1>", "<activity 2 in day 1>", ...],
-        ["<activity 1 in day 2>", "<activity 2 in day 2>", ...],
-        ["<activity 1 in day 3>", "<activity 2 in day 3>", ...],
-        ...
-      ]"`;
+  let destinationsCollection = await db.collection("destinations");
 
   try {
-    // Check what GPT thinks
-    const chatCompletion = await openai.chat.completions.create({
-      messages: [{
-        role: "user",
-        content: `${gptPrompt}`
-      }],
-      model: "gpt-3.5-turbo",
-      temperature: 0
-    });
+    // Build empty itinerary
+    let numberOfDays = 0;
+    for (let destination of destinations) {
+      numberOfDays += destination.numberOfDays;
+    }
+    const newItinerary = Array(numberOfDays).fill([]); // TODO: check if helpful to fill, might be better not to
 
-    // console.log('RAW: ', chatCompletion.choices[0].message.content);
-    const itineraryResponse = JSON.parse(chatCompletion.choices[0].message.content);
-    // console.log('RESP: ', itineraryResponse);
-    const newItinerary = [ ...itineraryResponse ];
+    // Update the trip itinerary: for each destination, dep on the number of days you are there, find a reasonable number of activities to do, spread it across the days
+    let overallDayIndex = 0;
+    for (let destinationIndex = 0; destinationIndex < destinations.length; destinationIndex++) {
+      // For each of the destinations, find the activities to do
+      const destination = destinations[destinationIndex];  
+      const destinationResult = await destinationsCollection.findOne({ name: destination.city })
+      const allDestinationActivities = destinationResult.activities;
 
-    // Build object to return to client
-    // TODO: figure out a better way to do this. Also, need to not change things like flights/hotel
-    for (let dayIndex = 0; dayIndex < itineraryResponse.length; dayIndex++) {
-      for (let activityIndex = 0; activityIndex < itineraryResponse[dayIndex].length; activityIndex++) {
-        const activityDescription = itineraryResponse[dayIndex][activityIndex];
-
-        newItinerary[dayIndex][activityIndex] = {
-          description: activityDescription,
-          itineraryType: 0,
-        };
+      // Fill out each day with the list of potential activities
+      let startingIndex = 0;
+      for (let dayIndex = 0; dayIndex < destination.numberOfDays; dayIndex++) {
+        const numActivities = 2; // TODO: figure out a better way to define how many activities a day
+        const activitiesDescription = allDestinationActivities.slice(startingIndex, startingIndex + numActivities);
+        newItinerary[overallDayIndex] = activitiesDescription.map((activityDescription) => {
+          return { description: activityDescription, itineraryType: 0}
+        });
+        startingIndex += numActivities;
+        overallDayIndex++;
       }
     }
 
@@ -89,8 +73,8 @@ router.patch('/:id', async (req, res) => {
         }
       };
 
-    let collection = await db.collection("trips");
-    let result = await collection.findOneAndUpdate(
+    let tripsCollection = await db.collection("trips");
+    let result = await tripsCollection.findOneAndUpdate(
       query,
       updates,
       { returnDocument: 'after'}
