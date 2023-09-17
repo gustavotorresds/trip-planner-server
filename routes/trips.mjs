@@ -9,9 +9,45 @@ const openai = new OpenAI({
 
 const router = express.Router();
 
+const generateItinerary = async (destinations) => {
+  let destinationsCollection = await db.collection("destinations");
+
+  // Build empty itinerary
+  const newItinerary = [];
+
+  // Update the trip itinerary: for each destination, dep on the number of days you are there, find a reasonable number of activities to do, spread it across the days
+  for (let destinationIdx = 0; destinationIdx < destinations.length; destinationIdx++) {
+    // For each of the destinations, find the activities to do
+    const destination = destinations[destinationIdx];
+    const dbDestination = await destinationsCollection.findOne({ name: destination.city })
+
+    // Fill out each day with the list of potential activities that haven't been used yet
+    let activitiesStartingIdx = 0;
+    for (let dayIdx = 0; dayIdx < destination.numberOfDays; dayIdx++) {
+      const activitiesPerDay = 2; // TODO: figure out a better way to define how many activities a day
+
+      // For the list of activities in the destination (which is just a string), we get the activities that were not used yet, then conver them to the format that trip itinerary takes
+      const dayItinerary = 
+        dbDestination
+          .activities
+          .slice(activitiesStartingIdx, activitiesStartingIdx + activitiesPerDay)
+          .map((activityDescription) => {
+            return {
+                description: activityDescription,
+                itineraryType: 0 // TODO: refactor this to use constants
+            }
+          });
+
+      newItinerary.push(dayItinerary);
+      activitiesStartingIdx += activitiesPerDay; // Update where we should pick next set of activities from
+    }
+  }
+
+  return newItinerary
+}
+
 // TODO: improve error handling
 // TODO: check how mongoose can help with schema's and DB management
-// TODO: convert to standard options from DB instead of creating on the fly
 
 // Get all trips
 router.get("/", async (req, res) => {
@@ -31,45 +67,15 @@ router.get("/", async (req, res) => {
 router.patch('/:id', async (req, res) => {
   const query = { _id: new ObjectId(req.params.id) };
 
-  const { startDate, destinations, } = req.body;
-
-  let destinationsCollection = await db.collection("destinations");
+  const { cityFrom, startDate, destinations, } = req.body;
 
   try {
-    // Build empty itinerary
-    let numberOfDays = 0;
-    for (let destination of destinations) {
-      numberOfDays += destination.numberOfDays;
-    }
-    const newItinerary = Array(numberOfDays).fill([]); // TODO: check if helpful to fill, might be better not to
-
-    // Update the trip itinerary: for each destination, dep on the number of days you are there, find a reasonable number of activities to do, spread it across the days
-    let overallDayIndex = 0;
-    for (let destinationIndex = 0; destinationIndex < destinations.length; destinationIndex++) {
-      // For each of the destinations, find the activities to do
-      const destination = destinations[destinationIndex];  
-      const destinationResult = await destinationsCollection.findOne({ name: destination.city })
-      const allDestinationActivities = destinationResult.activities;
-
-      // Fill out each day with the list of potential activities
-      let startingIndex = 0;
-      for (let dayIndex = 0; dayIndex < destination.numberOfDays; dayIndex++) {
-        const numActivities = 2; // TODO: figure out a better way to define how many activities a day
-        const activitiesDescription = allDestinationActivities.slice(startingIndex, startingIndex + numActivities);
-        newItinerary[overallDayIndex] = activitiesDescription.map((activityDescription) => {
-          return { description: activityDescription, itineraryType: 0}
-        });
-        startingIndex += numActivities;
-        overallDayIndex++;
-      }
-    }
-
     const updates = {
       $set: {
-          startDate: new Date(req.body.startDate),
-          cityFrom: req.body.cityFrom,
-          destinations: req.body.destinations,
-          itinerary: newItinerary,
+          startDate: new Date(startDate),
+          cityFrom: cityFrom,
+          destinations: destinations,
+          itinerary: await generateItinerary(destinations),
         }
       };
 
